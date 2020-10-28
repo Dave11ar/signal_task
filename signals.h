@@ -42,6 +42,7 @@ struct signal<void(Args...)> {
             ++tok->current;
           }
         }
+        sig = nullptr;
       }
     }
 
@@ -82,8 +83,14 @@ struct signal<void(Args...)> {
   ~signal() {
     for (iteration_token *tok = top_token; tok != nullptr; tok = tok->next) {
       if (tok->current != connections.end()) {
-        tok->destroyed = true;
+        tok->sig = nullptr;
       }
+    }
+
+    while (!connections.empty()) {
+      connections.front().slot = {};
+      connections.front().sig = nullptr;
+      connections.front().unlink();
     }
   }
 
@@ -94,34 +101,32 @@ struct signal<void(Args...)> {
   void operator()(Args... args) const {
     iteration_token tok(this);
 
-    try {
-      while (tok.current != connections.end()) {
-        auto copy = tok.current;
-        tok.current++;
-        copy->slot(args...);
+    while (tok.current != connections.end()) {
+      auto copy = tok.current;
+      tok.current++;
+      copy->slot(args...);
 
-        if (tok.destroyed) {
-          return;
-        }
+      if (tok.sig == nullptr) {
+        return;
       }
-    } catch (...) {
-      top_token = tok.next;
-      throw;
     }
-    top_token = tok.next;
   }
 
  private:
   struct iteration_token {
-    iteration_token() noexcept = default;
+    ~iteration_token() {
+      if (sig != nullptr) {
+        sig->top_token = next;
+      }
+    }
 
-    explicit iteration_token(signal const * sig) : current(sig->connections.begin()), next(sig->top_token) {
+    explicit iteration_token(signal const *sig) : current(sig->connections.begin()), next(sig->top_token), sig(sig) {
       sig->top_token = this;
     }
 
     typename connection_t::const_iterator current;
     iteration_token *next;
-    bool destroyed = false;
+    signal const *sig;
   };
 
   connection_t connections;
